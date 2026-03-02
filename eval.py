@@ -272,6 +272,7 @@ if __name__ == "__main__":
     # SHAP 特征重要性分析
     sample_idx = 6
     if_sum = False
+    # for sample_idx in range(16, 21):
     SHAP_both(lr_model, X_train, feature_names=feature_names, random_state=RANDOM_STATE,
               sample_idx=sample_idx, X_train_raw=X_train_raw, y_true=y_train, max_display=12, if_sum=if_sum)
     SHAP_both(dt_model, X_train, feature_names=feature_names, random_state=RANDOM_STATE,
