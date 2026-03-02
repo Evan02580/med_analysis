@@ -11,20 +11,25 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.tree import DecisionTreeClassifier
 
-from shap_model import SHAP_analysis, SHAP_waterfall_plot
+from shap_model import SHAP_analysis, SHAP_waterfall_plot, SHAP_both
 
 warnings.filterwarnings("ignore")
-import matplotlib.font_manager as font_manager
-font_manager.fontManager.addfont("/opt/anaconda3/envs/pytorch/lib/python3.13/site-packages/matplotlib/mpl-data/fonts/ttf/SimHei.ttf")
 
 # 配置 matplotlib 中文显示
-plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei']  # 优先使用黑体，fallback到英文字体
+plt.rcParams['font.family'] = 'Microsoft YaHei'
+# plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei']  # 优先使用黑体，fallback到英文字体
 plt.rcParams['axes.unicode_minus'] = False  # 正确显示负号
 
 # 参数设置
-FILE_PATH = "datasets/filled_data_v4 0109.csv"
-DROPPED_COL = ["Number", "JOA", "NRS/VAS", "胫骨前肌", "拇背伸肌肌力"]
-LABEL_COL = "dropped"
+FILE_PATH = "datasets/filled_data_v4_0302.csv"
+DROPPED_COL = ["Number",
+               "Tibialis anterior muscle strength",
+               "Extensor hallucis longus muscle strength",
+               "Max (TA & EHL) MS",
+               "Sum (TA & EHL) MS",
+               "JOA",
+               "NRS"]
+LABEL_COL = "Foot Drop"
 TEST_SIZE = 0.2
 RANDOM_STATE = 42
 
@@ -59,11 +64,62 @@ def read_data(csv_path, standardize=True):
         test_size=TEST_SIZE, random_state=RANDOM_STATE,
         shuffle=True
     )
-    print(f"Data split: {X_train.shape[0]} training samples, {X_test.shape[0]} testing samples ({(1 - TEST_SIZE) * 10:.0f}:{TEST_SIZE * 10:.0f})")
+    print(
+        f"Data split: {X_train.shape[0]} training samples, {X_test.shape[0]} testing samples ({(1 - TEST_SIZE) * 10:.0f}:{TEST_SIZE * 10:.0f})")
     print(f"Weight of positive samples in training set: {np.mean(y_train):.3f}")
     print(f"Weight of positive samples in testing set: {np.mean(y_test):.3f}")
 
     return X_train, X_test, y_train, y_test
+
+
+def read_data_new(csv_path, standardize=True, return_raw=True):
+    """数据预处理，返回标准化后的 X 以及（可选）未标准化的 raw X，用于展示原始值"""
+    df = pd.read_csv(csv_path)
+    df = df.dropna()
+    df.columns = [str(c).strip() for c in df.columns]
+    df = df.drop(columns=DROPPED_COL)
+    df = df.replace([np.inf, -np.inf], np.nan)
+
+    # 处理分类变量
+    for col in df.columns:
+        if df[col].dtype == 'object':
+            df[col] = df[col].astype(str).str.strip()
+            df[col] = LabelEncoder().fit_transform(df[col])
+
+    for col in df.columns:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    features_raw = df.drop(columns=[LABEL_COL])
+    labels = df[LABEL_COL]
+
+    # 标准化（保持你原先“全量 fit_transform 再 split”的行为）
+    if standardize:
+        scaler = StandardScaler()
+        features_scaled = scaler.fit_transform(features_raw)
+    else:
+        scaler = None
+        features_scaled = features_raw.values
+
+    if return_raw:
+        X_train, X_test, X_train_raw, X_test_raw, y_train, y_test = train_test_split(
+            features_scaled, features_raw, labels,
+            test_size=TEST_SIZE, random_state=RANDOM_STATE, shuffle=True
+        )
+    else:
+        X_train, X_test, y_train, y_test = train_test_split(
+            features_scaled, labels,
+            test_size=TEST_SIZE, random_state=RANDOM_STATE, shuffle=True
+        )
+        X_train_raw, X_test_raw = None, None
+
+    print(
+        f"Data split: {X_train.shape[0]} training samples, {X_test.shape[0]} testing samples ({(1 - TEST_SIZE) * 10:.0f}:{TEST_SIZE * 10:.0f})")
+    print(f"Weight of positive samples in training set: {np.mean(y_train):.3f}")
+    print(f"Weight of positive samples in testing set: {np.mean(y_test):.3f}")
+
+    if return_raw:
+        return X_train, X_test, X_train_raw, X_test_raw, y_train, y_test, scaler
+    return X_train, X_test, y_train, y_test, scaler
 
 
 def train_logistic_regression(X_train, y_train):
@@ -147,7 +203,7 @@ def plot_roc_curves(models, model_names, X_train, y_train, X_test, y_test, save_
         fpr_train, tpr_train, _ = roc_curve(y_train, y_proba_train)
         auc_train = roc_auc_score(y_train, y_proba_train)
         ax_train.plot(fpr_train, tpr_train, color=colors[idx], lw=2,
-                     label=f'{name} (AUC = {auc_train:.3f})')
+                      label=f'{name} (AUC = {auc_train:.3f})')
 
     # 绘制对角线 y=x
     ax_train.plot([0, 1], [0, 1], 'k--', lw=1, label='Reference')
@@ -166,7 +222,7 @@ def plot_roc_curves(models, model_names, X_train, y_train, X_test, y_test, save_
         fpr_test, tpr_test, _ = roc_curve(y_test, y_proba_test)
         auc_test = roc_auc_score(y_test, y_proba_test)
         ax_test.plot(fpr_test, tpr_test, color=colors[idx], lw=2,
-                    label=f'{name} (AUC = {auc_test:.3f})')
+                     label=f'{name} (AUC = {auc_test:.3f})')
 
     # 绘制对角线 y=x
     ax_test.plot([0, 1], [0, 1], 'k--', lw=1, label='Reference')
@@ -192,7 +248,8 @@ if __name__ == "__main__":
     df = df.drop(columns=DROPPED_COL)
     feature_names = [col for col in df.columns if col != LABEL_COL]
 
-    X_train, X_test, y_train, y_test = read_data(FILE_PATH, standardize=True)
+    # X_train, X_test, y_train, y_test = read_data(FILE_PATH, standardize=True)
+    X_train, X_test, X_train_raw, X_test_raw, y_train, y_test, scaler = read_data_new(FILE_PATH, standardize=True, return_raw=True)
     # 打印表格头
     print(f"| Models |  AUC  |  ACC  |  SEN  |  SPE  |F1Score|  PPV  |  NPV  |")
     lr_model = train_logistic_regression(X_train, y_train)
@@ -211,22 +268,33 @@ if __name__ == "__main__":
     # models = [lr_model, dt_model, rf_model, xgb_model]
     # model_names = ['LR', 'DT', 'RF', 'XGBoost']
     # plot_roc_curves(models, model_names, X_train, y_train, X_test, y_test)
-    
+
     # SHAP 特征重要性分析
-    print("\n" + "=" * 70)
-    print("SHAP 特征重要性分析")
-    print("=" * 70)
-    SHAP_analysis(xgb_model, X_train, feature_names=feature_names, random_state=RANDOM_STATE)
-    SHAP_analysis(rf_model, X_train, feature_names=feature_names, random_state=RANDOM_STATE)
-    SHAP_analysis(dt_model, X_train, feature_names=feature_names, random_state=RANDOM_STATE)
-    SHAP_analysis(lr_model, X_train, feature_names=feature_names, random_state=RANDOM_STATE)
+    sample_idx = 6
+    if_sum = False
+    SHAP_both(lr_model, X_train, feature_names=feature_names, random_state=RANDOM_STATE,
+              sample_idx=sample_idx, X_train_raw=X_train_raw, y_true=y_train, max_display=12, if_sum=if_sum)
+    SHAP_both(dt_model, X_train, feature_names=feature_names, random_state=RANDOM_STATE,
+              sample_idx=sample_idx, X_train_raw=X_train_raw, y_true=y_train, max_display=12, if_sum=if_sum)
+    SHAP_both(rf_model, X_train, feature_names=feature_names, random_state=RANDOM_STATE,
+              sample_idx=sample_idx, X_train_raw=X_train_raw, y_true=y_train, max_display=12, if_sum=if_sum)
+    SHAP_both(xgb_model, X_train, feature_names=feature_names, random_state=RANDOM_STATE,
+              sample_idx=sample_idx, X_train_raw=X_train_raw, y_true=y_train, max_display=12, if_sum=if_sum)
 
-    # SHAP Waterfall 图分析（展示四个模型对第一个样本的预测解释）
-    print("\n" + "=" * 70)
-    print("SHAP Waterfall 图分析（Sample 0）")
-    print("=" * 70)
-    SHAP_waterfall_plot(xgb_model, X_train, feature_names=feature_names, sample_idx=0, random_state=RANDOM_STATE)
-    SHAP_waterfall_plot(rf_model, X_train, feature_names=feature_names, sample_idx=0, random_state=RANDOM_STATE)
-    SHAP_waterfall_plot(dt_model, X_train, feature_names=feature_names, sample_idx=0, random_state=RANDOM_STATE)
-    SHAP_waterfall_plot(lr_model, X_train, feature_names=feature_names, sample_idx=0, random_state=RANDOM_STATE)
+    # print("\n" + "=" * 70)
+    # print("SHAP 特征重要性分析")
+    # print("=" * 70)
+    # SHAP_analysis(xgb_model, X_train, feature_names=feature_names, sample_idx=sample_idx, random_state=RANDOM_STATE)
+    # SHAP_analysis(rf_model, X_train, feature_names=feature_names, sample_idx=sample_idx, random_state=RANDOM_STATE)
+    # SHAP_analysis(dt_model, X_train, feature_names=feature_names, sample_idx=sample_idx, random_state=RANDOM_STATE)
+    # SHAP_analysis(lr_model, X_train, feature_names=feature_names, sample_idx=sample_idx, random_state=RANDOM_STATE)
 
+    # SHAP Waterfall 图分析
+    # print("\n" + "=" * 70)
+    # print(f"SHAP Waterfall 图分析（Sample {sample_idx}）")
+    # print("=" * 70)
+    # # for sample_idx in range(10, 16):
+    # SHAP_waterfall_plot(xgb_model, X_train, y_train, feature_names=feature_names, sample_idx=sample_idx, random_state=RANDOM_STATE)
+    # SHAP_waterfall_plot(rf_model, X_train, y_train, feature_names=feature_names, sample_idx=sample_idx, random_state=RANDOM_STATE)
+    # SHAP_waterfall_plot(dt_model, X_train, y_train, feature_names=feature_names, sample_idx=sample_idx, random_state=RANDOM_STATE)
+    # SHAP_waterfall_plot(lr_model, X_train, y_train, feature_names=feature_names, sample_idx=sample_idx, random_state=RANDOM_STATE)
